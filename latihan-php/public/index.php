@@ -1,5 +1,5 @@
 <?php
-// index.php
+session_start();
 
 if (isset($_GET['page'])) {
     $page = $_GET['page'];
@@ -7,8 +7,7 @@ if (isset($_GET['page'])) {
     $page = 'index';
 }
 
-// Pastikan jalur ke Controller sudah benar
-include (__DIR__ . '/controllers/TodoController.php');
+include('../controllers/TodoController.php');
 
 $todoController = new TodoController();
 switch ($page) {
@@ -24,7 +23,13 @@ switch ($page) {
     case 'delete':
         $todoController->delete();
         break;
-    case 'updateSort': // Rute untuk AJAX drag-and-drop
+    case 'detail':
+        $todoController->detail();
+        break;
+    case 'updateSort':
         $todoController->updateSort();
+        break;
+    default:
+        $todoController->index();
         break;
 }

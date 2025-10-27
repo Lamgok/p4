@@ -1,7 +1,5 @@
 <?php
-// TodoController.php
-
-require_once (__DIR__ . '/../models/TodoModel.php');
+require_once(__DIR__ . '/../models/TodoModel.php');
 
 class TodoController
 {
@@ -9,85 +7,82 @@ class TodoController
     {
         $todoModel = new TodoModel();
         
-        $filterStatus = isset($_GET['filter']) ? $_GET['filter'] : null;
-        $searchQuery = isset($_GET['search']) ? trim($_GET['search']) : null;
-
-        $todos = $todoModel->getAllTodos($filterStatus, $searchQuery);
+        $filter = $_GET['filter'] ?? 'all';
+        $search = $_GET['search'] ?? '';
         
-        $currentFilter = $filterStatus;
-        $currentSearch = $searchQuery;
-        
-        $error = isset($_GET['error']) ? $_GET['error'] : null;
-        
-        include (__DIR__ . '/../views/TodoView.php');
+        $todos = $todoModel->getAllTodos($filter, $search);
+        include(__DIR__ . '/../views/TodoView.php');
     }
 
     public function create()
     {
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $title = trim($_POST['title']);
-            $description = isset($_POST['description']) ? $_POST['description'] : null;
-
-            if (empty($title)) {
-                header('Location: index.php?error=empty_title_create');
-                return;
-            }
-
-            $todoModel = new TodoModel();
+            $title = trim($_POST['title'] ?? '');
+            $description = trim($_POST['description'] ?? '');
             
-            if (!$todoModel->createTodo($title, $description)) {
-                header('Location: index.php?error=duplicate_title_create');
-                return;
+            // Validasi input
+            if (empty($title)) {
+                session_start();
+                $_SESSION['error'] = 'Judul tidak boleh kosong';
+                header('Location: index.php');
+                exit;
+            }
+            
+            if (strlen($title) < 3) {
+                session_start();
+                $_SESSION['error'] = 'Judul harus minimal 3 karakter';
+                header('Location: index.php');
+                exit;
+            }
+            
+            $todoModel = new TodoModel();
+            $result = $todoModel->createTodo($title, $description);
+            
+            session_start();
+            if (!$result['success']) {
+                $_SESSION['error'] = $result['message'];
+            } else {
+                $_SESSION['success'] = $result['message'];
             }
         }
         header('Location: index.php');
+        exit;
     }
 
     public function update()
     {
         if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-            $id = $_POST['id'];
-            $title = trim($_POST['title']);
-            $isFinished = $_POST['is_finished']; 
-            $description = isset($_POST['description']) ? $_POST['description'] : null;
+            $id = $_POST['id'] ?? '';
+            $title = trim($_POST['title'] ?? '');
+            $description = trim($_POST['description'] ?? '');
+            $is_finished = isset($_POST['is_finished']) ? true : false;
             
-            if (empty($title)) {
-                header('Location: index.php?error=empty_title_update');
-                return;
+            if (empty($title) || empty($id)) {
+                session_start();
+                $_SESSION['error'] = 'Data tidak lengkap';
+                header('Location: index.php');
+                exit;
             }
-
-            $todoModel = new TodoModel();
             
-            if (!$todoModel->updateTodo($id, $title, $isFinished, $description)) {
-                header('Location: index.php?error=duplicate_title_update');
-                return;
+            if (strlen($title) < 3) {
+                session_start();
+                $_SESSION['error'] = 'Judul harus minimal 3 karakter';
+                header('Location: index.php');
+                exit;
+            }
+            
+            $todoModel = new TodoModel();
+            $result = $todoModel->updateTodo($id, $title, $description, $is_finished);
+            
+            session_start();
+            if (!$result['success']) {
+                $_SESSION['error'] = $result['message'];
+            } else {
+                $_SESSION['success'] = $result['message'];
             }
         }
         header('Location: index.php');
-    }
-    
-    // Fungsi untuk menerima data urutan dari AJAX
-    public function updateSort()
-    {
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['todo_ids'])) {
-            // Mengubah string ID yang dipisahkan koma menjadi array ID
-            $todoIdsString = $_POST['todo_ids'];
-            $todoIds = explode(',', $todoIdsString);
-            
-            // Memfilter agar hanya ID yang valid yang diproses
-            $todoIds = array_filter($todoIds, 'is_numeric');
-
-            if (!empty($todoIds)) {
-                 $todoModel = new TodoModel();
-                 if ($todoModel->updateSortOrder($todoIds)) {
-                     http_response_code(200); // OK
-                 } else {
-                     http_response_code(500); // Internal Server Error
-                 }
-            } else {
-                http_response_code(400); // Bad Request
-            }
-        }
+        exit;
     }
 
     public function delete()
@@ -95,8 +90,45 @@ class TodoController
         if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['id'])) {
             $id = $_GET['id'];
             $todoModel = new TodoModel();
-            $todoModel->deleteTodo($id);
+            $result = $todoModel->deleteTodo($id);
+            
+            session_start();
+            if (!$result['success']) {
+                $_SESSION['error'] = $result['message'];
+            } else {
+                $_SESSION['success'] = $result['message'];
+            }
         }
         header('Location: index.php');
+        exit;
+    }
+
+    public function detail()
+    {
+        if (isset($_GET['id'])) {
+            $id = $_GET['id'];
+            $todoModel = new TodoModel();
+            $todo = $todoModel->getTodoById($id);
+            include(__DIR__ . '/../views/TodoDetailView.php');
+        } else {
+            header('Location: index.php');
+        }
+    }
+
+    public function updateSort()
+    {
+        if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+            $input = file_get_contents('php://input');
+            $data = json_decode($input, true);
+            $todos = $data['todos'] ?? [];
+            
+            if (!empty($todos)) {
+                $todoModel = new TodoModel();
+                $result = $todoModel->updateSortOrder($todos);
+                echo json_encode(['success' => $result]);
+            } else {
+                echo json_encode(['success' => false, 'message' => 'Data tidak valid']);
+            }
+        }
     }
 }
