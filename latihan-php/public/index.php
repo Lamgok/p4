@@ -1,10 +1,14 @@
 <?php
+// index.php
+
 if (isset($_GET['page'])) {
     $page = $_GET['page'];
 } else {
     $page = 'index';
 }
-include ('../controllers/TodoController.php');
+
+// Pastikan jalur ke Controller sudah benar
+include (__DIR__ . '/controllers/TodoController.php');
 
 $todoController = new TodoController();
 switch ($page) {
@@ -19,5 +23,8 @@ switch ($page) {
         break;
     case 'delete':
         $todoController->delete();
+        break;
+    case 'updateSort': // Rute untuk AJAX drag-and-drop
+        $todoController->updateSort();
         break;
 }

@@ -1,6 +1,7 @@
 <?php
 // TodoModel.php
 
+// Pastikan file config.php berisi detail koneksi PostgreSQL (DB_HOST, DB_NAME, dll.)
 require_once (__DIR__ . '/../config.php');
 
 class TodoModel
@@ -18,43 +19,48 @@ class TodoModel
 
     public function getAllTodos($filterStatus = null, $search = null)
     {
-        // $filterStatus: 0=Belum Selesai, 1=Selesai, null=Semua
+        // $filterStatus: '0'=FALSE (Belum Selesai), '1'=TRUE (Selesai), null=Semua
         $conditions = [];
         $params = [];
-
+        
         // 1. Filter Status
         if ($filterStatus !== null && in_array($filterStatus, ['0', '1'])) {
-            $conditions[] = 'status = $' . (count($params) + 1);
-            $params[] = $filterStatus;
+            $conditions[] = 'is_finished = $' . (count($params) + 1);
+            $params[] = $filterStatus == '1' ? 'TRUE' : 'FALSE';
         }
 
-        // 2. Search (mencari di kolom activity/title)
+        // 2. Search (mencari di kolom title atau description)
         if (!empty($search)) {
-            $conditions[] = 'activity ILIKE $' . (count($params) + 1);
-            $params[] = '%' . $search . '%';
+            $conditions[] = '(title ILIKE $' . (count($params) + 1) . ' OR description ILIKE $' . (count($params) + 1) . ')';
+            $params[] = '%' . trim($search) . '%';
         }
 
-        $query = 'SELECT *, created_at as updated_at FROM todo'; // Simulasi updated_at = created_at
+        // SELECT menggunakan kolom baru dan ORDER BY sort_order
+        $query = 'SELECT id, title, description, is_finished, created_at, updated_at, sort_order FROM todo'; 
         if (!empty($conditions)) {
             $query .= ' WHERE ' . implode(' AND ', $conditions);
         }
-        $query .= ' ORDER BY id DESC'; // Order untuk simulasi sorting
+        $query .= ' ORDER BY sort_order ASC, id DESC'; // Order by sort_order
 
         $result = pg_query_params($this->conn, $query, $params);
         $todos = [];
         if ($result && pg_num_rows($result) > 0) {
             while ($row = pg_fetch_assoc($result)) {
+                // Konversi string 't'/'f' PostgreSQL menjadi boolean PHP
+                $row['is_finished'] = filter_var($row['is_finished'], FILTER_VALIDATE_BOOLEAN);
                 $todos[] = $row;
             }
         }
         return $todos;
     }
     
-    // Fungsi baru untuk validasi judul
-    public function checkDuplicateActivity($activity, $excludeId = null)
+    // Fungsi untuk validasi duplikasi judul
+    public function checkDuplicateTitle($title, $excludeId = null)
     {
-        $params = [$activity];
-        $query = 'SELECT id FROM todo WHERE activity = $1';
+        $title = trim($title);
+        
+        $params = [$title];
+        $query = 'SELECT id FROM todo WHERE title = $1'; 
         
         if ($excludeId !== null) {
             $query .= ' AND id != $2';
@@ -65,31 +71,76 @@ class TodoModel
         return $result && pg_num_rows($result) > 0;
     }
 
-    public function createTodo($activity)
+    public function createTodo($title, $description = null)
     {
-        // Validasi duplikasi
-        if ($this->checkDuplicateActivity($activity)) {
-            // Dalam aplikasi nyata, ini harus ditangani dengan pesan error yang baik
-            // Untuk sementara, kita return false dan biarkan controller menanganinya
+        $title = trim($title); 
+
+        if ($this->checkDuplicateTitle($title)) {
             return false; 
         }
 
-        $query = 'INSERT INTO todo (activity) VALUES ($1)';
-        $result = pg_query_params($this->conn, $query, [$activity]);
+        $description = trim($description);
+        $description = empty($description) ? null : $description;
+
+        // Ambil nilai sort_order maksimum + 1
+        $maxSortQuery = 'SELECT COALESCE(MAX(sort_order), 0) + 1 FROM todo';
+        $maxSortResult = pg_query($this->conn, $maxSortQuery);
+        $newSortOrder = pg_fetch_result($maxSortResult, 0, 0);
+
+        // INSERT menggunakan 'title', 'description', dan 'sort_order'
+        $query = 'INSERT INTO todo (title, description, sort_order) VALUES ($1, $2, $3)';
+        $result = pg_query_params($this->conn, $query, [$title, $description, $newSortOrder]);
         return $result !== false;
     }
 
-    public function updateTodo($id, $activity, $status)
+    public function updateTodo($id, $title, $isFinished, $description = null)
     {
-        // Validasi duplikasi, mengecualikan ID saat ini
-        if ($this->checkDuplicateActivity($activity, $id)) {
+        $title = trim($title);
+        
+        if ($this->checkDuplicateTitle($title, $id)) {
             return false;
         }
         
-        // Asumsi 'updated_at' tidak ada di DB, kita hanya update activity dan status
-        $query = 'UPDATE todo SET activity=$1, status=$2 WHERE id=$3';
-        $result = pg_query_params($this->conn, $query, [$activity, $status, $id]);
+        $description = trim($description);
+        $description = empty($description) ? null : $description;
+
+        // Konversi 0/1 dari form menjadi TRUE/FALSE untuk PostgreSQL BOOLEAN
+        $isFinishedValue = $isFinished == '1' ? 'TRUE' : 'FALSE';
+
+        $query = 'UPDATE todo SET title=$1, is_finished=$2, description=$3 WHERE id=$4';
+        $result = pg_query_params($this->conn, $query, [$title, $isFinishedValue, $description, $id]);
         return $result !== false;
+    }
+    
+    // Fungsi untuk menyimpan urutan (sorting)
+    public function updateSortOrder($todoIds)
+    {
+        if (!is_array($todoIds) || empty($todoIds)) {
+            return false;
+        }
+
+        $success = true;
+        // Gunakan transaksi untuk memastikan atomicity
+        pg_query($this->conn, "BEGIN");
+
+        foreach ($todoIds as $index => $id) {
+            $sortOrder = $index + 1;
+            $query = 'UPDATE todo SET sort_order=$1 WHERE id=$2';
+            $result = pg_query_params($this->conn, $query, [$sortOrder, $id]);
+            
+            if (!$result) {
+                $success = false;
+                break;
+            }
+        }
+        
+        if ($success) {
+            pg_query($this->conn, "COMMIT");
+        } else {
+            pg_query($this->conn, "ROLLBACK");
+        }
+
+        return $success;
     }
 
     public function deleteTodo($id)
